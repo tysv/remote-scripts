@@ -1,0 +1,126 @@
+#!/bin/env bash
+
+#	ping watch just pings an ip and keeps a simple log
+#	if last seen was offline, then note when NEWLY online
+#	if last seen was online, then note when NEWLY offline
+#	??? optional (every X minutes) "same state confirmed"
+
+debugflag=false
+script_name="$(basename "$0")"
+
+#configfile="$HOME/.config/$USER/$script_name/.${script_name}"
+ping_interval=1 #unit is in minutes
+ping_seconds="$((ping_interval * 60))"
+def_ping_target="127.0.0.1"; ping_target="$def_ping_target"
+ping_history="no past to speak of"
+
+
+logfile="$HOME/.config/$USER/$script_name/${ping_target}_$(date "+%m-%d-%y")_$(date +%s).log"
+
+#########################   utility functions   ################################
+
+exiting () { logger "EXIT" "$(date)"; }
+trap 'exiting' EXIT ERR
+
+logger () { first="$1"; shift; printf "%s\t%s\n" "$first" "$*" >> "$logfile"; }
+debug () { if [ "$debugflag" = "true" ]; then echo "$*"; fi; }
+error () { printf "error:$0: %s\n" "$1"; exit "${2:-1}"; }
+print_help_text () { printf "%s\n" "\
+$(strbuilts --center "\
+$script_name USAGE: $script_name <-(-o)ptions> <args>")
+Options include:
+	-(-h)elp	will print this text
+$(strbuilts --line)
+"
+}
+########################        FUNCTIONS        ##############################
+pid_record () {
+	printf "%s %s" "$$" "$ping_target" >> "$pidsfile"
+}
+pid_purge () {
+	args=("$@")
+	match="false"
+	newfile="newfile.log"
+	return 25 #this is psuedo code currently
+	for p in readline; do
+		for a in "${args[@]}"; do if [ "$a" = "$p" ]; then match="true"; fi done
+		if [ "$match" = "false" ];then printf "%s" >> "$newfile"; fi
+	done < "$pidsfile"
+}
+ping_array () {
+	echo "ping_array ()"
+}
+ping_once () {
+	ping -c2 -W .5 "$ping_target"
+}
+read_hosts () {
+	echo "read_hosts ()"
+}
+ping_loop () {
+	mkdir --parents "$(dirname "$logfile")" && touch "$logfile"
+	logger "$$"
+	response="offline"
+	while true; do
+		if [ "$debugflag" = "true" ]; then
+			printf "%s\n" "test: ping "$ping_target""
+			printf "%s\n" "test: sleep "$((ping_interval * 60))""
+		else
+			ping -c1 -W1 -q "$ping_target" 1>&2>/dev/null && response="ONLINE"
+			if [ ! "$response" = "$ping_history" ]; then
+				logger "$response" "$(date)"
+			fi
+			ping_history="$response"
+			response=""
+		fi
+		sleep "$ping_seconds"
+	done
+}
+
+#########################     option parsing     ###############################
+
+shopt -s nocasematch
+while [ -n "$1" ]; do
+	case "$1" in
+		--help|-h)
+			print_help_text
+		;;
+		--logfile|-l)
+			if [ -d "$(dirname $2)" ]; then logfile="$(realpath "$2")"; shift
+			else error "invalid logfile path ($2)"; fi
+		;;
+		--target|-t)
+			ping_target="$2"; shift
+			#if [ is_ip_format "$2" ]; then ping_target="$2"; shift
+			#else error "invalid target ip ($2)"; fi
+		;;
+		--interval|-i) #how often to check in
+			input="$2"; shift
+			if [ -z "${input//[0-9]/}" -a "$input" -gt 0 ]; then
+				ping_interval="$input"; ping_seconds="$((ping_interval * 60))"
+			else error "invalid ping  interval ($input)"; fi
+		;;
+		--debug|-d)
+			debugflag=true
+		;;
+		--pids|-p)
+			echo "will print the PIDs of pingerwatch instances"
+		;;
+		*)
+			if [ "$def_ping_target" = "$ping_target" ]; then 
+				ping_target="$1"; shift
+			else error "can't parse argument ($1)"; fi
+		;;
+	esac
+	shift
+done
+shopt -u nocasematch
+
+logfile="$HOME/.config/$USER/$script_name/${ping_target}_$(date "+%m-%d-%y")_$(date +%s).log"
+
+logger "START" "ping_loop"
+ping_loop
+###############################################################################
+exit 0
+
+
+#[0-9]{1,3}[\:\.\-]{1}[0-9]{1,3}[\:\.\-]{1}[0-9]{1,3}[\:\.\-]{1}[0-9]{1,3}[\/]{0,1}
