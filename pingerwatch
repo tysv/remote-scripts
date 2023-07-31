@@ -11,6 +11,7 @@ script_name="$(basename "$0")"
 #configfile="$HOME/.config/$USER/$script_name/.${script_name}"
 ping_interval=1 #unit is in minutes
 ping_seconds="$((ping_interval * 60))"
+ping_seconds="1"
 def_ping_target="127.0.0.1"; ping_target="$def_ping_target"
 ping_history="no past to speak of"
 
@@ -19,8 +20,8 @@ logfile="$HOME/.config/$USER/$script_name/${ping_target}_$(date "+%m-%d-%y")_$(d
 
 #########################   utility functions   ################################
 
-exiting () { logger "EXIT" "$(date)"; }
-trap 'exiting' EXIT ERR
+exiting_function () { logger "EXIT" "$(date)"; }
+trap 'exiting_function' EXIT ERR
 
 logger () { first="$1"; shift; printf "%s\t%s\n" "$first" "$*" >> "$logfile"; }
 debug () { if [ "$debugflag" = "true" ]; then echo "$*"; fi; }
@@ -105,17 +106,20 @@ while [ -n "$1" ]; do
 		--pids|-p)
 			echo "will print the PIDs of pingerwatch instances"
 		;;
+		--name|-n)
+			target_name="$2" && shift
+			target_name="${target_name//[!A-z0-9]/}"
+			logfile="$HOME/.config/$USER/$script_name/${target_name}_$(date "+%m-%d-%y")_$(date +%s).log"
+		;;
 		*)
 			if [ "$def_ping_target" = "$ping_target" ]; then 
-				ping_target="$1"; shift
+				ping_target="$1"
 			else error "can't parse argument ($1)"; fi
 		;;
 	esac
 	shift
 done
 shopt -u nocasematch
-
-logfile="$HOME/.config/$USER/$script_name/${ping_target}_$(date "+%m-%d-%y")_$(date +%s).log"
 
 logger "START" "ping_loop"
 ping_loop
