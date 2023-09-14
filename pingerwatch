@@ -5,25 +5,41 @@
 #	if last seen was online, then note when NEWLY offline
 #	??? optional (every X minutes) "same state confirmed"
 
+
+
 debugflag=false
 script_name="$(basename "$0")"
 
-#configfile="$HOME/.config/$USER/$script_name/.${script_name}"
-ping_interval=1 #unit is in minutes
-ping_seconds="$((ping_interval * 60))"
-ping_seconds="1"
-def_ping_target="127.0.0.1"; ping_target="$def_ping_target"
+#configfile="soruce $HOME/.config/$USER/$script_name/.${script_name}"
+sleep_seconds=3 #number of seconds
+default_ping_target="127.0.0.1"; ping_target="$default_ping_target"
+target_name="$ping_target"
 ping_history="no past to speak of"
+ping_length=1; #number of seconds per connection attempt
+ping_count=5;  #number of attempts per attempt
+ping_date_format="%Y-%m-%d %H:%M"
+ping_date () { date "+${ping_date_format}"; }
+
+default_log_directory="$HOME/.config/$USER/$script_name"
+log_directory="$default_log_directory"
+log_date_format="%Y%m%d"
+log_date=$(date "+$log_date_format")
+use_def_dir=true
+use_def_name=true
+update_log_dir () { log_directory=$default_log_directory; }
+update_log_file () { log_file="${log_directory}/${log_name}"; }
+update_log_name () { log_name="${target_name}_${log_date}.log"; }
+
+###TEE_OPTIONS### one of these: overrode by options --log and --file
+#tee_file=""		#--log=./hostname-date.log --file="$2"	#
+
+################################################################################
 
 
-logfile="$HOME/.config/$USER/$script_name/${ping_target}_$(date "+%m-%d-%y")_$(date +%s).log"
-
+################################################################################
 #########################   utility functions   ################################
+################################################################################
 
-exiting_function () { logger "EXIT" "$(date)"; }
-trap 'exiting_function' EXIT ERR
-
-logger () { first="$1"; shift; printf "%s\t%s\n" "$first" "$*" >> "$logfile"; }
 debug () { if [ "$debugflag" = "true" ]; then echo "$*"; fi; }
 error () { printf "error:$0: %s\n" "$1"; exit "${2:-1}"; }
 print_help_text () { printf "%s\n" "\
@@ -34,10 +50,24 @@ Options include:
 $(strbuilts --line)
 "
 }
-########################        FUNCTIONS        ##############################
-pid_record () {
-	printf "%s %s" "$$" "$ping_target" >> "$pidsfile"
+########################        FUNCTIONS        #############################
+###############################################################################
+tee_mode=both
+tee2 () { #hopefully this simplifies the thing 
+	result="${1,,}"
+	case $tee_mode in
+		file) # file only
+			printf "%s\n" "$result" > "$log_file"
+		;;
+		log)
+			#tee_file="${log_dir}/${log_name}"
+			printf "%s\n" "$result" > tee $log_file
+		;;
+		*) exit 111; ;;
+	esac
 }
+################################################################################
+pid_record () {	printf "%s %s" "$$" "$ping_target" >> "$pidsfile"; }
 pid_purge () {
 	args=("$@")
 	match="false"
@@ -49,31 +79,38 @@ pid_purge () {
 	done < "$pidsfile"
 }
 ping_array () {
-	echo "ping_array ()"
+	echo "todo: ping_array ()"
 }
 ping_once () {
-	ping -c2 -W .5 "$ping_target"
+	ping -c "${ping_count}" -W "$ping_length" "${1:-$ping_target}" 1>&2> /dev/null
+	return $?
 }
 read_hosts () {
-	echo "read_hosts ()"
+	echo "todo: read_hosts ()"
 }
-ping_loop () {
-	mkdir --parents "$(dirname "$logfile")" && touch "$logfile"
-	logger "$$"
-	response="offline"
+###############################################################################
+dump_variables () {
+	echo "log_name: $log_name"
+	echo "log_directory: $log_directory"
+	echo "log_file: $log_file"
+	echo "ping_target: $ping_target"
+	echo "target_name: $target_name"
+	echo "ping_count: $ping_count"
+	echo "ping_length: $ping_length"
+}
+run_pingwatch_single () { 
+	response="offline" #ping_history defined above, to be overwritten
+	if [ "$debugflag" = true ]; then dump_variables; sleep 1; fi
 	while true; do
-		if [ "$debugflag" = "true" ]; then
-			printf "%s\n" "test: ping "$ping_target""
-			printf "%s\n" "test: sleep "$((ping_interval * 60))""
-		else
-			ping -c1 -W1 -q "$ping_target" 1>&2>/dev/null && response="ONLINE"
-			if [ ! "$response" = "$ping_history" ]; then
-				logger "$response" "$(date)"
-			fi
-			ping_history="$response"
-			response=""
-		fi
-		sleep "$ping_seconds"
+		sleep "$sleep_seconds"
+		printf "."
+		ping_once && response="ONLINE"
+		#ping_once && { response="ONLINE"; echo online; }
+		[ "$response" = "$ping_history" ] && continue
+		#if [ ! "$response" = "$ping_history" ]; then 
+		printf "%s\n" "$(ping_date) $response" | tee "$log_file"
+		ping_history="$response"
+		response=offline
 	done
 }
 
@@ -81,48 +118,59 @@ ping_loop () {
 
 shopt -s nocasematch
 while [ -n "$1" ]; do
-	case "$1" in
-		--help|-h)
-			print_help_text
-		;;
-		--logfile|-l)
-			if [ -d "$(dirname $2)" ]; then logfile="$(realpath "$2")"; shift
-			else error "invalid logfile path ($2)"; fi
-		;;
+	key="$1" && shift
+	case "$key" in
 		--target|-t)
-			ping_target="$2"; shift
+			if [ "$ping_target" = "$target_name" ]; then target_name="$1"; fi
+			ping_target="$1"; shift;
 			#if [ is_ip_format "$2" ]; then ping_target="$2"; shift
 			#else error "invalid target ip ($2)"; fi
 		;;
-		--interval|-i) #how often to check in
-			input="$2"; shift
+		--interval|-i|--seconds|--secs) #how often to check in
+			input="$1"; shift
 			if [ -z "${input//[0-9]/}" -a "$input" -gt 0 ]; then
-				ping_interval="$input"; ping_seconds="$((ping_interval * 60))"
-			else error "invalid ping  interval ($input)"; fi
+				 sleep_seconds="$input"
+			else error "invalid num of secs for daemon sleep:($input)"; fi
 		;;
-		--debug|-d)
-			debugflag=true
+		--directory|--dir) 
+			if [ -w "$1" ]; then log_directory="$1"
+			else error "invalid directory: $1"; exit 1; fi
+			use_def_dir="false"
+			shift
 		;;
-		--pids|-p)
-			echo "will print the PIDs of pingerwatch instances"
+		--file|-f) 
+			if [ -w "$(dirname 1)" ]; then 
+				use_def_dir="false"
+				use_def_name="false"
+				log_directory="$(dirname $1)"
+				log_name="$(basename $1)"
+			else error "invalid directory: $1"; exit 1; fi
+			shift
 		;;
-		--name|-n)
-			target_name="$2" && shift
+		--pcount|--pc) ping_count="$1"; shift 1; ;;
+		--plength|--pl) ping_length="$1"; shift 1; ;;
+		--debug|-d) debugflag=true; ;;
+		--help|-h) print_help_text; ;;
+		--pids|-p) echo "todo: print PIDqs of pingerwatch instances"; ;;
+		--hostname|--host|--name|-n)
+			target_name="$1" || error "um. this option requires an argument..?lol"
 			target_name="${target_name//[!A-z0-9]/}"
-			logfile="$HOME/.config/$USER/$script_name/${target_name}_$(date "+%m-%d-%y")_$(date +%s).log"
+			shift
 		;;
-		*)
-			if [ "$def_ping_target" = "$ping_target" ]; then 
-				ping_target="$1"
-			else error "can't parse argument ($1)"; fi
+		*)	[ -z "$key" ] && continue
+			if [ "$default_ping_target" = "$ping_target" -a -n "$key" ]; then 
+				if [ "$ping_target" = "$target_name" ]; then target_name="$key"; fi
+				ping_target="$key"
+			else error "can't parse argument ($key)"; exit 1; fi
 		;;
 	esac
-	shift
 done
 shopt -u nocasematch
+[ "$use_def_dir" = true ] && update_log_dir
+[ "$use_def_name" = true ] && update_log_name
+update_log_file
 
-logger "START" "ping_loop"
-ping_loop
+run_pingwatch_single
 ###############################################################################
 exit 0
 
