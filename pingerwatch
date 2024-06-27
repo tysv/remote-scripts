@@ -6,30 +6,42 @@
 #	??? optional (every X minutes) "same state confirmed"
 
 
+#TODO TODO TODO TODO TODO
+#1) version of this meant to be ran as a daemon, which uses cron/systemd and NOT sleep
+#2) pid file upkeep/purging/rotation
+#3) killing active pingerwatch processes in pid file
+#4) pingerwatch until change > run command
 
 debugflag=false
 script_name="$(basename "$0")"
 
 #configfile="soruce $HOME/.config/$USER/$script_name/.${script_name}"
-sleep_seconds=3 #number of seconds
-default_ping_target="127.0.0.1"; ping_target="$default_ping_target"
+sleep_seconds=60 #number of seconds default to very slow
+sleep_seconds_floor="$sleep_seconds"
+sleep_seconds_increment=60 # add a minute everytime things remain static
+sleep_seconds_ceiling=1200 #never increment sleep past this many seconds
+default_ping_target="127.0.0.1"
+ping_target="$default_ping_target"
 target_name="$ping_target"
 ping_history="no past to speak of"
 ping_length=1; #number of seconds per connection attempt
-ping_count=5;  #number of attempts per attempt
+ping_count=5;  #number of pings_attempts per discrete attempt
 ping_date_format="%Y-%m-%d %H:%M"
 ping_date () { date "+${ping_date_format}"; }
 
 default_log_directory="$HOME/.config/$USER/$script_name"
+[ -d "$default_log_directory" ] || mkdir --parents "$default_log_directory"
 log_directory="$default_log_directory"
 log_date_format="%Y%m%d"
 log_date=$(date "+$log_date_format")
 use_def_dir=true
 use_def_name=true
+use_ping_dot=true
 update_log_dir () { log_directory=$default_log_directory; }
 update_log_file () { log_file="${log_directory}/${log_name}"; }
 update_log_name () { log_name="${target_name}_${log_date}.log"; }
-
+#store running processes here
+pid_file="${log_directory}/pingerwatch_pids.log"
 ###TEE_OPTIONS### one of these: overrode by options --log and --file
 #tee_file=""		#--log=./hostname-date.log --file="$2"	#
 
@@ -67,7 +79,8 @@ tee2 () { #hopefully this simplifies the thing
 	esac
 }
 ################################################################################
-pid_record () {	printf "%s %s" "$$" "$ping_target" >> "$pidsfile"; }
+pid_record () {	printf "%s %s" "$$" "$ping_target" >> "$pid_file"; }
+pid_print () { cat "$pid_file"; }
 pid_purge () {
 	args=("$@")
 	match="false"
@@ -76,10 +89,11 @@ pid_purge () {
 	for p in readline; do
 		for a in "${args[@]}"; do if [ "$a" = "$p" ]; then match="true"; fi done
 		if [ "$match" = "false" ];then printf "%s" >> "$newfile"; fi
-	done < "$pidsfile"
+	done < "$pid_file"
 }
 ping_array () {
 	echo "todo: ping_array ()"
+	#not sure what this is supposed to become, other than "test multiple at once"
 }
 ping_once () {
 	ping -c "${ping_count}" -W "$ping_length" "${1:-$ping_target}" 1>&2> /dev/null
@@ -99,18 +113,20 @@ dump_variables () {
 	echo "ping_length: $ping_length"
 }
 run_pingwatch_single () { 
+	pid_record
 	response="offline" #ping_history defined above, to be overwritten
 	if [ "$debugflag" = true ]; then dump_variables; sleep 1; fi
 	while true; do
 		sleep "$sleep_seconds"
-		printf "."
+		response=offline #reset flag always to make the continue work
+		[ "$use_ping_dot" = 'true' ] && printf "."
 		ping_once && response="ONLINE"
 		#ping_once && { response="ONLINE"; echo online; }
 		[ "$response" = "$ping_history" ] && continue
 		#if [ ! "$response" = "$ping_history" ]; then 
 		printf "%s\n" "$(ping_date) $response" | tee "$log_file"
 		ping_history="$response"
-		response=offline
+		#response=offline
 	done
 }
 
@@ -147,11 +163,12 @@ while [ -n "$1" ]; do
 			else error "invalid directory: $1"; exit 1; fi
 			shift
 		;;
-		--pcount|--pc) ping_count="$1"; shift 1; ;;
-		--plength|--pl) ping_length="$1"; shift 1; ;;
+		--pcount|-pc) ping_count="$1"; shift 1; ;;
+		--plength|-pl) ping_length="$1"; shift 1; ;;
+		--pdot|-pd) use_ping_dot="$1"; shift 1; ;;
 		--debug|-d) debugflag=true; ;;
 		--help|-h) print_help_text; ;;
-		--pids|-p) echo "todo: print PIDqs of pingerwatch instances"; ;;
+		--pids|-p) pid_print; exit 0;;
 		--hostname|--host|--name|-n)
 			target_name="$1" || error "um. this option requires an argument..?lol"
 			target_name="${target_name//[!A-z0-9]/}"
